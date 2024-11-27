@@ -66,7 +66,7 @@ app.post('/twilio/voice', async (req, res) => {
     res.type('text/xml');
     res.send(twiml.toString());
   } catch (error) {
-    console.error('Erreur lors de la génération de l'audio initial :', error);
+    console.error("Erreur lors de la génération de l'audio initial :", error);
     res.status(500).send('Erreur lors de la génération de l'audio initial');
   }
 });
