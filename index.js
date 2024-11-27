@@ -3,8 +3,8 @@ const express = require('express');
 const axios = require('axios');
 const { OpenAI } = require('openai');
 const { Deepgram } = require('@deepgram/sdk');
-const twilio = require('twilio');
 const WebSocket = require('ws');
+const twilio = require('twilio');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -14,7 +14,7 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// Initialisation de l'API Deepgram
+// Initialisation de l'API Deepgram avec la version 3
 const deepgram = new Deepgram(process.env.DEEPGRAM_API_KEY);
 
 // Configuration de l'API Twilio
@@ -31,10 +31,8 @@ app.get('/', (req, res) => {
 app.post('/twilio/voice', (req, res) => {
   const twiml = new twilio.twiml.VoiceResponse();
 
-  // Saluer l'appelant
-  twiml.say('Bonjour, comment puis-je vous aider ?');
-
-  // Démarrer l'enregistrement de l'audio
+  // Accueil du client avec un message vocal
+  twiml.say('Bonjour, comment puis-je vous aider?');
   twiml.record({
     action: '/twilio/recording',
     recordingStatusCallback: '/twilio/recording-status',
@@ -46,71 +44,69 @@ app.post('/twilio/voice', (req, res) => {
   res.send(twiml.toString());
 });
 
-// Route pour gérer l'enregistrement audio et le transcrire avec Deepgram puis WebSocket OpenAI
+// Route pour gérer l'enregistrement audio et le transcrire avec Deepgram
 app.post('/twilio/recording', async (req, res) => {
   const recordingUrl = req.body.RecordingUrl + '.mp3';
 
   try {
     // Transcrire l'enregistrement audio avec Deepgram
-    const transcriptionResponse = await deepgram.transcription.preRecorded(
+    const response = await deepgram.transcription.preRecorded(
       { url: recordingUrl },
-      { punctuate: true, language: 'fr' }
+      { punctuate: true }
     );
 
-    const transcription = transcriptionResponse.results.channels[0].alternatives[0].transcript;
+    const transcription = response.results.channels[0].alternatives[0].transcript;
 
-    console.log('Transcription reçue de Deepgram :', transcription);
+    // Générer une réponse avec GPT-4 en utilisant le SDK OpenAI
+    const gptResponse = await openai.chat.completions.create({
+      model: 'gpt-4',
+      messages: [{ role: 'user', content: transcription }],
+    });
 
-    // Créer une connexion WebSocket vers l'API Realtime d'OpenAI
-    const ws = new WebSocket('wss://api.openai.com/v1/realtime', {
+    const generatedText = gptResponse.choices[0].message.content.trim();
+
+    // Utiliser la synthèse vocale en temps réel d'OpenAI via WebSocket pour la réponse
+    const ws = new WebSocket('wss://api.openai.com/v1/audio/synthesize', {
       headers: {
         'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-      }
+      },
     });
 
     ws.on('open', () => {
-      console.log('WebSocket connecté à OpenAI');
-
-      // Envoyer la transcription reçue de Deepgram au WebSocket pour traitement
       const event = {
         type: 'conversation.item.create',
         item: {
           type: 'message',
-          role: 'user',
-          content: transcription
-        }
+          role: 'assistant',
+          content: [
+            {
+              type: 'input_text',
+              text: generatedText,
+            },
+          ],
+        },
       };
 
       ws.send(JSON.stringify(event));
+      ws.send(JSON.stringify({ type: 'response.create' }));
     });
 
     ws.on('message', (data) => {
-      const response = JSON.parse(data);
-      if (response.item && response.item.type === 'output_text') {
-        const generatedText = response.item.content;
-
-        console.log('Texte généré par OpenAI :', generatedText);
-
-        // Utiliser Twilio pour jouer la réponse à l'appelant
-        const twiml = new twilio.twiml.VoiceResponse();
-        twiml.say(generatedText);
-
-        res.type('text/xml');
-        res.send(twiml.toString());
-      }
+      const twiml = new twilio.twiml.VoiceResponse();
+      twiml.play({ loop: 1 }, `data:audio/mpeg;base64,${Buffer.from(data).toString('base64')}`);
+      
+      res.type('text/xml');
+      res.send(twiml.toString());
     });
 
     ws.on('error', (error) => {
-      console.error('Erreur de connexion WebSocket :', error);
-      res.status(500).send('Erreur lors de la connexion au WebSocket');
+      console.error('Erreur lors de la génération de la réponse audio :', error);
+      res.status(500).send('Erreur lors de la génération de la réponse audio');
     });
 
-    ws.on('close', () => {
-      console.log('Connexion WebSocket fermée');
-    });
   } catch (error) {
-    console.error('Erreur lors de la transcription ou de la génération de la réponse :', error);
-    res.status(500).send('Erreur lors de la transcription ou de la génération de la réponse');
+    console.error('Erreur lors de la génération de la réponse :', error);
+    res.status(500).send('Erreur lors de la génération de la réponse');
   }
 });
 
