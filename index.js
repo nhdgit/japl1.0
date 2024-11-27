@@ -2,7 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const { OpenAI } = require('openai');
-const { Deepgram } = require('@deepgram/sdk');
+const { createClient } = require('@deepgram/sdk');
 const twilio = require('twilio');
 
 const app = express();
@@ -14,12 +14,9 @@ const openai = new OpenAI({
 });
 
 // Initialisation de l'API Deepgram version 3
-const { createClient } = require('@deepgram/sdk');
-
 const deepgram = createClient({
   apiKey: process.env.DEEPGRAM_API_KEY,
 });
-
 
 // Configuration de l'API Twilio
 const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
@@ -32,20 +29,46 @@ app.get('/', (req, res) => {
 });
 
 // Route pour gérer les appels Twilio
-app.post('/twilio/voice', (req, res) => {
+app.post('/twilio/voice', async (req, res) => {
   const twiml = new twilio.twiml.VoiceResponse();
 
-  // Démarrer l'enregistrement de l'audio
-  twiml.say('Merci de votre appel. Veuillez parler après le bip.');
-  twiml.record({
-    action: '/twilio/recording',
-    recordingStatusCallback: '/twilio/recording-status',
-    maxLength: 60,
-    transcribe: false,
-  });
+  // Utiliser OpenAI pour générer l'audio du message de bienvenue
+  const initialText = 'Bonjour, comment puis-je vous aider ?';
+  try {
+    // Utiliser la synthèse vocale avec l'API TTS d'OpenAI
+    const ttsResponse = await axios.post(
+      'https://api.openai.com/v1/audio/synthesize',
+      {
+        input: initialText,
+        voice: 'fr-realistic', // Choisir une voix française naturelle d'OpenAI
+        model: 'tts-1-hd', // Modèle optimisé pour la qualité
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        responseType: 'arraybuffer', // Pour recevoir les données audio
+      }
+    );
 
-  res.type('text/xml');
-  res.send(twiml.toString());
+    // Jouer l'audio généré au client avec Twilio
+    twiml.play({ loop: 1 }, `data:audio/mpeg;base64,${Buffer.from(ttsResponse.data).toString('base64')}`);
+
+    // Enregistrer l'audio de la réponse du client
+    twiml.record({
+      action: '/twilio/recording',
+      recordingStatusCallback: '/twilio/recording-status',
+      maxLength: 60,
+      transcribe: false,
+    });
+
+    res.type('text/xml');
+    res.send(twiml.toString());
+  } catch (error) {
+    console.error('Erreur lors de la génération de l'audio initial :', error);
+    res.status(500).send('Erreur lors de la génération de l'audio initial');
+  }
 });
 
 // Route pour gérer l'enregistrement audio et le transcrire avec Deepgram
@@ -54,10 +77,10 @@ app.post('/twilio/recording', async (req, res) => {
 
   try {
     // Transcrire l'enregistrement audio avec Deepgram
-    const response = await deepgram.transcription.preRecorded(
-      { url: recordingUrl },
-      { punctuate: true }
-    );
+    const response = await deepgram.transcription.prerecorded({
+      url: recordingUrl,
+      options: { punctuate: true }
+    });
 
     const transcription = response.results.channels[0].alternatives[0].transcript;
 
@@ -69,12 +92,12 @@ app.post('/twilio/recording', async (req, res) => {
 
     const generatedText = gptResponse.choices[0].message.content.trim();
 
-    // Utiliser la synthèse vocale avec l'API TTS d'OpenAI
+    // Utiliser la synthèse vocale avec l'API TTS d'OpenAI pour la réponse
     const ttsResponse = await axios.post(
       'https://api.openai.com/v1/audio/synthesize',
       {
         input: generatedText,
-        voice: 'alloy', // Choix de la voix souhaitée
+        voice: 'fr-realistic', // Choisir une voix française naturelle d'OpenAI
         model: 'tts-1-hd', // Modèle optimisé pour la qualité
       },
       {
