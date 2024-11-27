@@ -31,9 +31,8 @@ app.get('/', (req, res) => {
 // Route pour gérer les appels Twilio
 app.post('/twilio/voice', async (req, res) => {
   const twiml = new twilio.twiml.VoiceResponse();
-
-  // Utiliser OpenAI pour générer l'audio du message de bienvenue
   const initialText = 'Bonjour, comment puis-je vous aider ?';
+
   try {
     // Utiliser la synthèse vocale avec l'API TTS d'OpenAI
     const ttsResponse = await axios.post(
@@ -45,7 +44,7 @@ app.post('/twilio/voice', async (req, res) => {
       },
       {
         headers: {
-          'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
           'Content-Type': 'application/json',
         },
         responseType: 'arraybuffer', // Pour recevoir les données audio
@@ -67,7 +66,7 @@ app.post('/twilio/voice', async (req, res) => {
     res.send(twiml.toString());
   } catch (error) {
     console.error("Erreur lors de la génération de l'audio initial :", error);
-    res.status(500).send('Erreur lors de la génération de l'audio initial');
+    res.status(500).send("Erreur lors de la génération de l'audio initial");
   }
 });
 
@@ -77,10 +76,12 @@ app.post('/twilio/recording', async (req, res) => {
 
   try {
     // Transcrire l'enregistrement audio avec Deepgram
-    const response = await deepgram.transcription.prerecorded({
-      url: recordingUrl,
-      options: { punctuate: true }
-    });
+    const response = await deepgram.transcription.prerecorded(
+      {
+        url: recordingUrl,
+        options: { punctuate: true },
+      }
+    );
 
     const transcription = response.results.channels[0].alternatives[0].transcript;
 
@@ -102,7 +103,7 @@ app.post('/twilio/recording', async (req, res) => {
       },
       {
         headers: {
-          'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
           'Content-Type': 'application/json',
         },
         responseType: 'arraybuffer', // Pour recevoir les données audio
@@ -116,8 +117,8 @@ app.post('/twilio/recording', async (req, res) => {
     res.type('text/xml');
     res.send(twiml.toString());
   } catch (error) {
-    console.error('Erreur lors de la génération de la réponse :', error);
-    res.status(500).send('Erreur lors de la génération de la réponse');
+    console.error("Erreur lors de la génération de la réponse :", error);
+    res.status(500).send("Erreur lors de la génération de la réponse");
   }
 });
 
